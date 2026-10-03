@@ -1,0 +1,614 @@
+openapi: 3.0.3
+
+info:
+  title: MoonPay Simplified API
+  description: |
+    A simplified REST API for fiat-to-crypto and crypto-to-fiat transactions.
+
+    The API is designed around quotes and orders, with support for
+    authentication, idempotency, rate limiting, webhooks and consistent
+    error responses.
+  version: 1.0.0
+
+servers:
+  - url: https://api.example.com
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Quotes
+    description: Exchange quotes
+  - name: Orders
+    description: Order creation and lifecycle
+  - name: Assets
+    description: Supported assets
+  - name: Limits
+    description: Rates and transaction limits
+  - name: Webhooks
+    description: Webhook testing
+
+paths:
+
+  /v1/quotes:
+    post:
+      tags:
+        - Quotes
+      summary: Create a quote
+      description: Returns a short-lived quote for an on-ramp or off-ramp transaction.
+      operationId: createQuote
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRequest'
+            example:
+              type: onramp
+              fiat_currency: USD
+              fiat_amount: "250.00"
+              crypto_currency: BTC
+              network: bitcoin
+
+      responses:
+        '200':
+          description: Quote created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+
+  /v1/orders:
+    post:
+      tags:
+        - Orders
+      summary: Create an order
+      description: |
+        Creates an on-ramp or off-ramp order.
+
+        The Idempotency-Key header is required to prevent duplicate
+        orders when clients retry requests.
+      operationId: createOrder
+
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+            example:
+              type: onramp
+              fiat_currency: USD
+              fiat_amount: "250.00"
+              crypto_currency: BTC
+              network: bitcoin
+              wallet_address: bc1qexample123
+
+      responses:
+        '201':
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+        '409':
+          description: Idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: IDEMPOTENCY_CONFLICT
+                  message: Idempotency key was already used with a different request.
+                  request_id: req_123456
+
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+
+  /v1/orders/{order_id}:
+    get:
+      tags:
+        - Orders
+      summary: Get order
+      description: Returns the current state and details of an order.
+      operationId: getOrder
+
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+
+      responses:
+        '200':
+          description: Order details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+
+  /v1/orders/{order_id}/cancel:
+    post:
+      tags:
+        - Orders
+      summary: Cancel an order
+      description: Cancels an order when its current state allows cancellation.
+      operationId: cancelOrder
+
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+
+      responses:
+        '200':
+          description: Order cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+        '409':
+          description: Order cannot be cancelled in its current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVALID_STATE
+                  message: Completed orders cannot be cancelled.
+                  request_id: req_123456
+
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+
+  /v1/assets:
+    get:
+      tags:
+        - Assets
+      summary: List supported assets
+      operationId: listAssets
+
+      responses:
+        '200':
+          description: Supported assets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  assets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Asset'
+
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+
+  /v1/rates/limits:
+    get:
+      tags:
+        - Limits
+      summary: Get rates and transaction limits
+      operationId: getRatesAndLimits
+
+      parameters:
+        - in: query
+          name: currency
+          required: false
+          schema:
+            type: string
+            example: USD
+
+      responses:
+        '200':
+          description: Current rates and limits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimits'
+
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+
+  /v1/webhooks/test:
+    post:
+      tags:
+        - Webhooks
+      summary: Send a test webhook
+      description: Sends a test event to the configured partner webhook.
+      operationId: sendTestWebhook
+
+      responses:
+        '202':
+          description: Webhook queued for delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event_id:
+                    type: string
+                    example: evt_123456
+                  status:
+                    type: string
+                    example: queued
+
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+
+components:
+
+  securitySchemes:
+
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+
+  parameters:
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Unique key used to make order creation safe to retry.
+      schema:
+        type: string
+        format: uuid
+      example: 7c9f2b12-4d2a-4c7b-a123-123456789abc
+
+    OrderId:
+      name: order_id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: ord_123456
+
+
+  schemas:
+
+    QuoteRequest:
+      type: object
+      required:
+        - type
+        - fiat_currency
+        - fiat_amount
+        - crypto_currency
+        - network
+
+      properties:
+        type:
+          type: string
+          enum:
+            - onramp
+            - offramp
+
+        fiat_currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: USD
+
+        fiat_amount:
+          type: string
+          pattern: '^[0-9]+(\.[0-9]{1,2})?$'
+          example: "250.00"
+
+        crypto_currency:
+          type: string
+          example: BTC
+
+        network:
+          type: string
+          example: bitcoin
+
+
+    Quote:
+      type: object
+      required:
+        - quote_id
+        - crypto_amount
+        - rate
+        - fee
+        - expires_at
+
+      properties:
+        quote_id:
+          type: string
+          example: qt_123456
+
+        crypto_amount:
+          type: string
+          example: "0.0028"
+
+        rate:
+          type: string
+          example: "89285.71"
+
+        fee:
+          type: string
+          example: "5.00"
+
+        expires_at:
+          type: string
+          format: date-time
+          example: "2026-10-03T10:31:00Z"
+
+
+    OrderRequest:
+      type: object
+      required:
+        - type
+        - fiat_currency
+        - fiat_amount
+        - crypto_currency
+        - network
+        - wallet_address
+
+      properties:
+        type:
+          type: string
+          enum:
+            - onramp
+            - offramp
+
+        fiat_currency:
+          type: string
+          example: USD
+
+        fiat_amount:
+          type: string
+          example: "250.00"
+
+        crypto_currency:
+          type: string
+          example: BTC
+
+        network:
+          type: string
+          example: bitcoin
+
+        wallet_address:
+          type: string
+          example: bc1qexample123
+
+
+    Order:
+      type: object
+      required:
+        - id
+        - type
+        - status
+        - fiat_currency
+        - fiat_amount
+        - crypto_currency
+        - created_at
+
+      properties:
+        id:
+          type: string
+          example: ord_123456
+
+        type:
+          type: string
+          enum:
+            - onramp
+            - offramp
+
+        status:
+          type: string
+          enum:
+            - created
+            - payment_pending
+            - processing
+            - completed
+            - failed
+            - cancelled
+
+        fiat_currency:
+          type: string
+          example: USD
+
+        fiat_amount:
+          type: string
+          example: "250.00"
+
+        crypto_currency:
+          type: string
+          example: BTC
+
+        crypto_amount:
+          type: string
+          example: "0.0028"
+
+        created_at:
+          type: string
+          format: date-time
+
+        updated_at:
+          type: string
+          format: date-time
+
+
+    Asset:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: BTC
+
+        name:
+          type: string
+          example: Bitcoin
+
+        networks:
+          type: array
+          items:
+            type: string
+          example:
+            - bitcoin
+
+
+    RateLimits:
+      type: object
+      properties:
+        requests_per_minute:
+          type: integer
+          example: 100
+
+        minimum_order_amount:
+          type: string
+          example: "10.00"
+
+        maximum_order_amount:
+          type: string
+          example: "10000.00"
+
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+        - request_id
+
+      properties:
+        code:
+          type: string
+          example: INVALID_PARAMETER
+
+        message:
+          type: string
+          example: wallet_address is required
+
+        request_id:
+          type: string
+          example: req_123456
+
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+
+
+  responses:
+
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          description: Number of seconds before retrying
+          schema:
+            type: integer
+            example: 30
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ServiceUnavailable:
+      description: Temporary dependency or service failure
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
